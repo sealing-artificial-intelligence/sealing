@@ -3,7 +3,8 @@ from sklearn.decomposition import IncrementalPCA
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import random
-
+import pandas as pd
+import io
 class APIKeyValidationError(Exception):
     pass
 
@@ -63,6 +64,29 @@ class SEAL:
             return response.json().get("vectors")
         else:
             print("Failed to pull vectors:", response.status_code, response.text)
+            return None
+        
+
+    def generate_data_from_csv(self, csv_file_path):
+        url = "https://yearly-notable-newt.ngrok-free.app/generate-data-from-csv"
+
+        try:
+            with open(csv_file_path, 'rb') as file:
+                files = {'file': (csv_file_path, file, 'text/csv')}
+                headers = {'Authorization': f'Bearer {self.api_key}'}
+                response = requests.post(url, files=files, headers=headers)
+
+            if response.status_code == 200:
+                df = pd.read_csv(io.StringIO(response.text))
+                print("Received and parsed synthetic data successfully.")
+                return df
+            else:
+                print(f"Error: Received status code {response.status_code}")
+                print(response.text)
+                return None
+
+        except Exception as e:
+            print(f"Failed to generate data from CSV: {e}")
             return None
 
     @property
