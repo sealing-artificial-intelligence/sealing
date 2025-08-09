@@ -88,6 +88,32 @@ class SEAL:
         except Exception as e:
             print(f"Failed to generate data from CSV: {e}")
             return None
+    
+    def generate_images_from_text(self, text: str, num_images: int = 5):
+        url = f"{self.base_url}/generate_images_from_text"
+        payload = {
+            "session_key": self.api_key,
+            "text": text,
+            "num_images": num_images
+        }
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"Failed to generate images: {response.status_code} {response.text}")
+                return None
+        except Exception as e:
+            print(f"Exception during generate_images_from_text: {e}")
+            return None
+
+
 
     @property
     def validated(self) -> bool:
