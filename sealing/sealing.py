@@ -4,7 +4,12 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import random
 import pandas as pd
+import sys
+import itertools
+import threading
 import io
+import time
+
 class APIKeyValidationError(Exception):
     pass
 
@@ -70,11 +75,27 @@ class SEAL:
     def generate_data_from_csv(self, csv_file_path):
         url = "https://yearly-notable-newt.ngrok-free.app/generate-data-from-csv"
 
+        def spinner():
+            for c in itertools.cycle(['|', '/', '-', '\\']):
+                if stop_spinner:
+                    break
+                sys.stdout.write(f'\rGenerating data... {c}')
+                sys.stdout.flush()
+                time.sleep(0.1)
+            sys.stdout.write('\rDone generating data!   \n')
+
+        stop_spinner = False
+        spinner_thread = threading.Thread(target=spinner)
+        spinner_thread.start()
+
         try:
             with open(csv_file_path, 'rb') as file:
                 files = {'file': (csv_file_path, file, 'text/csv')}
                 headers = {'Authorization': f'Bearer {self.api_key}'}
                 response = requests.post(url, files=files, headers=headers)
+
+            stop_spinner = True
+            spinner_thread.join()
 
             if response.status_code == 200:
                 df = pd.read_csv(io.StringIO(response.text))
@@ -86,33 +107,64 @@ class SEAL:
                 return None
 
         except Exception as e:
+            stop_spinner = True
+            spinner_thread.join()
             print(f"Failed to generate data from CSV: {e}")
             return None
     
-    def generate_images_from_text(self, text: str, num_images: int = 5):
-        url = f"{self.base_url}/generate_images_from_text"
-        payload = {
-            "session_key": self.api_key,
-            "text": text,
-            "num_images": num_images
-        }
+    def upload_images(self, zip_file_path: str):
+        url = f"{self.base_url}/upload-zip"
+        try:
+            with open(zip_file_path, 'rb') as f:
+                files = {
+                    'file': (zip_file_path, f, 'application/zip')
+                }
+                data = {
+                    'api_key': self.api_key
+                }
+                headers = {
+                    'Authorization': f'Bearer {self.api_key}'
+                }
 
+                response = requests.post(url, files=files, data=data, headers=headers)
+
+            if response.status_code == 200:
+                print("Zip uploaded successfully:", response.json())
+                return response.json()
+            else:
+                print(f"Failed to upload zip: {response.status_code} {response.text}")
+                return None
+        except Exception as e:
+            print(f"Exception during zip upload: {e}")
+            return None
+        
+    def download_zip(self, file_name: str, save_path: str):
+        url = f"{self.base_url}/download_zip"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
-
+        payload = {
+            "api_key": self.api_key,
+            "file_name": file_name
+        }
+        
         try:
-            response = requests.post(url, json=payload, headers=headers)
+            response = requests.post(url, json=payload, headers=headers, stream=True)
+            
             if response.status_code == 200:
-                return response.json()
+                with open(save_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                print(f"ZIP downloaded and saved to {save_path}")
+                return save_path
             else:
-                print(f"Failed to generate images: {response.status_code} {response.text}")
+                print(f"Failed to download ZIP: {response.status_code} {response.text}")
                 return None
         except Exception as e:
-            print(f"Exception during generate_images_from_text: {e}")
+            print(f"Exception during ZIP download: {e}")
             return None
-
 
 
     @property
