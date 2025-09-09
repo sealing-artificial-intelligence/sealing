@@ -9,6 +9,10 @@ import itertools
 import threading
 import io
 import time
+import socket
+import torch
+import torch.nn as nn
+import torch.optim as optim
 
 class APIKeyValidationError(Exception):
     pass
@@ -170,3 +174,72 @@ class SEAL:
     @property
     def validated(self) -> bool:
         return self._validated
+
+
+class DeepSetRNN(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, rnn_hidden_dim):
+        super().__init__()
+        self.phi = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+        self.rnn = nn.GRU(hidden_dim, rnn_hidden_dim, batch_first=True)
+        self.rho = nn.Sequential(
+            nn.Linear(rnn_hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim)
+        )
+        self.rnn_hidden_dim = rnn_hidden_dim
+        self.hidden_state = None
+
+    def forward(self, x):
+        h = self.phi(x)
+        h_sum = h.sum(dim=0, keepdim=True).unsqueeze(0)
+        if self.hidden_state is None:
+            self.hidden_state = torch.zeros(1, 1, self.rnn_hidden_dim)
+        else:
+            self.hidden_state = self.hidden_state.detach()
+        rnn_out, self.hidden_state = self.rnn(h_sum, self.hidden_state)
+        out = self.rho(rnn_out.squeeze(0))
+        return out.squeeze(0)
+
+    def reset_hidden(self):
+        self.hidden_state = None
+
+
+class DeepSetSocket:
+    def __init__(self, sock, model, optimizer, criterion, k=10):
+        self.sock = sock
+        self.model = model
+        self.optimizer = optimizer
+        self.criterion = criterion
+        self.k = k
+
+    def send(self, message: np.ndarray):
+        data = message.astype(np.float32).tobytes()
+        self.sock.sendall(data)
+
+    def recv(self, expected_dim: int):
+        received = []
+        for _ in range(self.k):
+            chunk = self.sock.recv(expected_dim * 4)
+            if not chunk:
+                break
+            msg = np.frombuffer(chunk, dtype=np.float32)
+            received.append(msg)
+        if len(received) == 0:
+            return None
+        received_tensor = torch.tensor(np.stack(received))
+        predicted = self.model(received_tensor)
+        return predicted.detach().numpy()
+
+    def train_step(self, true_message, received):
+        received_tensor = torch.tensor(received)
+        true_tensor = torch.tensor(true_message)
+        self.optimizer.zero_grad()
+        predicted = self.model(received_tensor)
+        loss = self.criterion(predicted, true_tensor)
+        loss.backward()
+        self.optimizer.step()
+        return loss.item()
